@@ -58,6 +58,15 @@
         <div class="room-subject" id="room-subject"><span class="room-status-dot"></span><span id="room-subject-label">Loading topics</span></div>
       </div>
       <div class="room-content" id="room-content" aria-live="polite"></div>
+      <section class="daily-challenge" id="daily-challenge" aria-labelledby="daily-challenge-title">
+        <div class="daily-heading">
+          <div><p class="eyebrow"><span class="eyebrow-line"></span> PREPPO AI / DAILY CHALLENGE</p><h3 id="daily-challenge-title">One topic. Five quick questions.</h3><p>Correct answers earn 10 points and move you forward. One wrong answer or timeout ends today's challenge.</p></div>
+          <div class="daily-score"><strong id="daily-points">0</strong><span>POINTS</span></div>
+        </div>
+        <div class="daily-controls"><span class="daily-context" id="daily-context">Choose a career path and topic above.</span><button class="button button-gold" id="start-daily-challenge" type="button">Start today's challenge <span aria-hidden="true">&#8594;</span></button></div>
+        <p class="daily-status" id="daily-status" role="status" aria-live="polite"></p>
+        <div class="daily-question-area" id="daily-question-area" hidden></div>
+      </section>
       <div class="test-launch">
         <div><span class="test-kicker">READY WHEN YOU ARE</span><h3>Check what stuck.</h3><p>Generate a short multiple-choice test from this topic’s notes and interview questions.</p></div>
         <div class="test-options">

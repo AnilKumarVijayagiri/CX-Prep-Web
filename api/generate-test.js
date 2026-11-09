@@ -26,10 +26,14 @@ function parseGeneratedTest(content, requestedCount) {
   );
 
   if (questions.length !== requestedCount) return null;
+  const normalizedQuestions = questions.map(question => ({
+    ...question,
+    timeLimit: question.timeLimit === 5 ? 5 : 7
+  }));
   return {
     title: typeof parsed.title === "string" ? parsed.title.slice(0, 120) : "Topic practice test",
     instructions: typeof parsed.instructions === "string" ? parsed.instructions.slice(0, 280) : "Choose one answer for each question, then submit to review your results.",
-    questions
+    questions: normalizedQuestions
   };
 }
 
@@ -65,20 +69,24 @@ module.exports = async (request, response) => {
   const roadmap = typeof body.roadmap === "string" ? body.roadmap.trim().slice(0, 180) : "";
   const notes = typeof body.notes === "string" ? body.notes.trim().slice(0, 8000) : "";
   const difficulty = ["beginner", "intermediate", "mixed"].includes(body.difficulty) ? body.difficulty : "mixed";
-  const questionCount = Number(body.questionCount);
+  const mode = body.mode === "daily" ? "daily" : "test";
+  const questionCount = mode === "daily" ? 5 : Number(body.questionCount);
   const sourceQuestions = Array.isArray(body.questions) ? body.questions.slice(0, 12).map(item => ({
     question: typeof item?.question === "string" ? item.question.slice(0, 500) : "",
     answer: typeof item?.answer === "string" ? item.answer.slice(0, 1200) : ""
   })) : [];
 
-  if (!topic || !notes || !Number.isInteger(questionCount) || questionCount < 3 || questionCount > 10) {
+  if (!topic || !notes || !Number.isInteger(questionCount) || questionCount < (mode === "daily" ? 5 : 3) || questionCount > 10) {
     sendError(response, 400, "Choose a topic with learning notes and request between 3 and 10 questions.");
     return;
   }
 
-  const systemPrompt = "You create accurate interview-preparation assessments. Return one JSON object only, without markdown. The object must have title (string), instructions (string), and questions (array). Each question must have question (string), options (an array of exactly four distinct strings), answerIndex (integer from 0 to 3), and explanation (string). Questions must test understanding of the supplied material. Do not invent facts outside it. Avoid trick questions, duplicate questions, and ambiguous options.";
+  const systemPrompt = "You create accurate interview-preparation assessments. Return one JSON object only, without markdown. The object must have title (string), instructions (string), and questions (array). Each question must have question (string), options (an array of exactly four distinct strings), answerIndex (integer from 0 to 3), explanation (string), and timeLimit (integer 5 or 7). Choose 5 seconds for direct recall and 7 seconds when the question needs brief reasoning. Questions must test understanding of the supplied material. Do not invent facts outside it. Avoid trick questions, duplicate questions, and ambiguous options.";
   const userPrompt = JSON.stringify({
-    task: `Create exactly ${questionCount} ${difficulty} multiple-choice interview practice questions.`,
+    task: mode === "daily"
+      ? "Create exactly five short, sequential rapid-fire multiple-choice questions for a timed daily challenge. Mix direct recall and brief reasoning; set each timeLimit to 5 or 7 seconds accordingly."
+      : `Create exactly ${questionCount} ${difficulty} multiple-choice interview practice questions.`,
+    mode,
     careerPath: roadmap,
     topic,
     learningMaterial: notes,
@@ -108,6 +116,14 @@ module.exports = async (request, response) => {
 
     if (!upstream.ok) {
       console.error("Ollama Cloud request failed with status", upstream.status);
+      if (upstream.status === 402) {
+        sendError(response, 402, "Ollama Cloud requires active billing or available credits for this key. Check the Ollama account, then try again.");
+        return;
+      }
+      if (upstream.status === 429) {
+        sendError(response, 429, "Ollama Cloud is rate limiting requests. Wait a little and try again.");
+        return;
+      }
       sendError(response, upstream.status === 401 || upstream.status === 403 ? 502 : 503, "Ollama could not generate the test. Check the Vercel Ollama key and model settings, then try again.");
       return;
     }

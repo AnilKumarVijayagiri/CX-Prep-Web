@@ -32,11 +32,14 @@ The admin editor supports career branch, experience level, roadmap length, skill
 
 ## Interview Room and Ollama Cloud
 
-The public Interview Room lets learners choose a career path and topic, review its notes and question answers, and request a multiple-choice test. Generation uses Ollama's OpenAI-compatible cloud endpoint from the Vercel serverless function at `api/generate-test.js`; the key is never sent to the browser.
+The public Interview Room lets learners choose a career path and topic, review its notes and question answers, request a multiple-choice test, or start a PrepPo AI daily challenge. The daily challenge generates five topic-specific questions; correct answers award 10 points and advance, while one wrong answer or timeout ends that day's attempt. Ollama selects a 5-second limit for direct-recall questions and 7 seconds for short reasoning questions. The score and one-attempt-per-day state are stored in that browser's local storage.
+
+Generation uses Ollama's OpenAI-compatible cloud endpoint from the Vercel serverless function at `api/generate-test.js`; the key is never sent to the browser.
 
 1. Create an Ollama Cloud API key at https://ollama.com/settings/keys.
 2. In Vercel Project Settings > Environment Variables, add `OLLAMA_API_KEY` for Production and Preview as a **Sensitive** variable, then redeploy. Never add this key to `config.js`, browser code, or GitHub.
 3. Optionally set `OLLAMA_MODEL` to a cloud model available to your Ollama account. The default is `gemma4:31b`.
+4. Ensure the Ollama account has cloud access, billing, or credits enabled. A provider `402` response is shown in the room as an account billing/credits message.
 
 The generation endpoint accepts 3-10 questions per request and applies a best-effort per-instance request limit. For local generation, use `vercel dev` with `OLLAMA_API_KEY` configured in your local environment; a basic static file server can show the learning material but does not execute Vercel API routes. Add a stronger shared rate limit or abuse challenge before broad public promotion of AI generation.
 

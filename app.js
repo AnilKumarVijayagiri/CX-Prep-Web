@@ -142,12 +142,33 @@ demoRoadmaps.push(
   }
 );
 
-const state = { client: null, user: null, admin: false, roadmaps: [], activeRoadmap: null, activeDay: 0, activeTab: "notes", selectedTrack: "All", adminRoadmaps: [], roomRoadmapId: null, roomTopicIndex: 0, generatedTest: null };
+const state = { client: null, user: null, admin: false, roadmaps: [], activeRoadmap: null, activeDay: 0, activeTab: "notes", selectedTrack: "All", adminRoadmaps: [], roomRoadmapId: null, roomTopicIndex: 0, generatedTest: null, dailyChallenge: null };
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character]);
 const lineBreaks = value => escapeHtml(value).replace(/\n/g, "<br>");
 const roadmapDays = roadmap => roadmap?.content?.days || [];
 const taskStorageKey = roadmap => `prep-complete-${roadmap?.slug || roadmap?.id}`;
+const dailyPointsKey = "preppo-daily-points";
+
+function localDateKey() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function dailyAttemptKey() {
+  return `preppo-daily-attempt-${localDateKey()}`;
+}
+
+function readDailyAttempt() {
+  try { return JSON.parse(localStorage.getItem(dailyAttemptKey()) || "null"); }
+  catch { return null; }
+}
+
+function setRoomSelectorLock(isLocked) {
+  ["#room-roadmap-select", "#room-topic-select", "#test-question-count", "#test-difficulty"].forEach(selector => {
+    $(selector).disabled = isLocked;
+  });
+}
 
 function normalizedRoadmap(row) {
   return { ...row, skills: Array.isArray(row.skills) ? row.skills : (row.content?.skills || []) };
@@ -285,6 +306,7 @@ function renderInterviewTopics() {
   state.generatedTest = null;
   $("#test-area").hidden = true;
   $("#test-status").textContent = "";
+  renderDailyChallenge();
 }
 
 function renderInterviewRoom() {
@@ -296,6 +318,200 @@ function renderInterviewRoom() {
   roadmapSelect.value = state.roomRoadmapId;
   state.roomTopicIndex = 0;
   renderInterviewTopics();
+}
+
+function renderDailyChallenge() {
+  const roadmap = state.roadmaps.find(item => String(item.id) === $("#room-roadmap-select").value);
+  const day = roadmapDays(roadmap)[Number($("#room-topic-select").value) || 0];
+  const points = Number(localStorage.getItem(dailyPointsKey)) || 0;
+  $("#daily-points").textContent = String(points);
+  $("#daily-context").textContent = roadmap && day ? `${roadmap.title} / ${day.title}` : "Choose a career path and topic above.";
+
+  const button = $("#start-daily-challenge");
+  const area = $("#daily-question-area");
+  if (state.dailyChallenge && !state.dailyChallenge.completed) {
+    button.disabled = true;
+    button.textContent = "Challenge in progress";
+    setRoomSelectorLock(true);
+    renderDailyQuestion();
+    return;
+  }
+  if (state.dailyChallenge?.completed) {
+    button.disabled = true;
+    button.textContent = "Today's challenge complete";
+    setRoomSelectorLock(false);
+    renderDailyQuestion();
+    return;
+  }
+
+  const attempt = readDailyAttempt();
+  if (attempt) {
+    button.disabled = true;
+    button.textContent = "Come back tomorrow";
+    area.hidden = true;
+    $("#daily-status").textContent = attempt.completed
+      ? attempt.result === "success"
+        ? `Today's ${attempt.roadmap} challenge is complete. You earned ${attempt.score} points.`
+        : `Today's ${attempt.roadmap} challenge ended. You earned ${attempt.score} points; come back tomorrow for a new one.`
+      : "Today's challenge was already started in this browser. Come back tomorrow for a fresh one.";
+    return;
+  }
+
+  setRoomSelectorLock(false);
+  button.disabled = !roadmap || !day?.notes;
+  button.innerHTML = `Start today's challenge <span aria-hidden="true">&#8594;</span>`;
+  area.hidden = true;
+  $("#daily-status").textContent = "A new challenge is available each day. Correct answers add 10 points.";
+}
+
+async function startDailyChallenge() {
+  if (readDailyAttempt() || state.dailyChallenge) {
+    renderDailyChallenge();
+    return;
+  }
+  const roadmap = state.roadmaps.find(item => String(item.id) === $("#room-roadmap-select").value);
+  const topicIndex = Number($("#room-topic-select").value) || 0;
+  const day = roadmapDays(roadmap)[topicIndex];
+  if (!roadmap || !day?.notes) {
+    $("#daily-status").textContent = "Choose a career path and topic with learning notes first.";
+    return;
+  }
+
+  const button = $("#start-daily-challenge");
+  button.disabled = true;
+  setRoomSelectorLock(true);
+  $("#daily-status").innerHTML = `<span class="daily-loading">PrepPo AI is creating today's questions from ${escapeHtml(day.title)}.</span>`;
+  const requestedRoadmapId = String(roadmap.id);
+
+  try {
+    const response = await fetch("/api/generate-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "daily",
+        roadmap: roadmap.title,
+        topic: day.title,
+        notes: `${day.notes}\n\nKey concepts: ${(day.concepts || []).join(", ")}`,
+        questions: day.questions || [],
+        questionCount: 5,
+        difficulty: "mixed"
+      })
+    });
+    const result = await response.json().catch(() => ({ error: "The challenge API is not running. Use the deployed site or `vercel dev`." }));
+    if (!response.ok) throw new Error(result.error || "PrepPo AI could not create today's challenge.");
+    if (String($("#room-roadmap-select").value) !== requestedRoadmapId || Number($("#room-topic-select").value) !== topicIndex) {
+      throw new Error("The selected topic changed. Start the challenge again for your current topic.");
+    }
+    if (!Array.isArray(result.questions) || result.questions.length !== 5) throw new Error("PrepPo AI returned an incomplete challenge. Please try again.");
+
+    state.dailyChallenge = {
+      questions: result.questions,
+      index: 0,
+      score: 0,
+      remaining: 0,
+      timer: null,
+      answerLocked: false,
+      completed: false,
+      roadmap: roadmap.title,
+      topic: day.title
+    };
+    localStorage.setItem(dailyAttemptKey(), JSON.stringify({ started: true, completed: false, score: 0, roadmap: roadmap.title, topic: day.title }));
+    $("#daily-status").textContent = "";
+    beginDailyQuestion();
+  } catch (error) {
+    $("#daily-status").textContent = error.message;
+    setRoomSelectorLock(false);
+    button.disabled = false;
+  }
+}
+
+function beginDailyQuestion() {
+  const challenge = state.dailyChallenge;
+  if (!challenge || challenge.completed) return;
+  const question = challenge.questions[challenge.index];
+  challenge.remaining = question.timeLimit === 5 ? 5 : 7;
+  challenge.answerLocked = false;
+  challenge.feedback = "";
+  renderDailyQuestion();
+  challenge.timer = window.setInterval(() => {
+    challenge.remaining -= 1;
+    const clock = $("#daily-clock");
+    const value = $("#daily-clock-value");
+    if (clock && value) {
+      value.textContent = String(Math.max(challenge.remaining, 0));
+      clock.style.setProperty("--timer-angle", `${Math.max(challenge.remaining, 0) / question.timeLimit * 360}deg`);
+    }
+    if (challenge.remaining <= 0) finishDailyChallenge("timeout");
+  }, 1000);
+}
+
+function renderDailyQuestion() {
+  const challenge = state.dailyChallenge;
+  const area = $("#daily-question-area");
+  if (!challenge) { area.hidden = true; return; }
+  const question = challenge.questions[challenge.index];
+  if (!question) return;
+  const timerAngle = question.timeLimit ? challenge.remaining / question.timeLimit * 360 : 360;
+  area.hidden = false;
+  area.innerHTML = `<article class="daily-question">
+    <div class="daily-question-head"><span class="daily-question-count">QUESTION ${challenge.index + 1} / ${challenge.questions.length}</span><div class="daily-clock" id="daily-clock" style="--timer-angle:${timerAngle}deg"><span id="daily-clock-value">${challenge.remaining}</span></div></div>
+    <h4>${escapeHtml(question.question)}</h4>
+    <div class="daily-choices">${question.options.map((option, index) => {
+      const selectedClass = challenge.answerLocked && index === challenge.selectedAnswer ? (challenge.selectedAnswer === question.answerIndex ? "correct" : "wrong") : "";
+      const correctClass = challenge.answerLocked && index === question.answerIndex ? "correct" : "";
+      return `<button class="daily-choice ${selectedClass || correctClass}" type="button" data-daily-answer="${index}" ${challenge.answerLocked ? "disabled" : ""}>${escapeHtml(option)}</button>`;
+    }).join("")}</div>
+    ${challenge.feedback ? `<p class="daily-feedback"><strong>${escapeHtml(challenge.feedback)}</strong>${challenge.answerLocked ? ` ${escapeHtml(question.explanation)}` : ""}</p>` : ""}
+  </article>`;
+}
+
+function finishDailyChallenge(result) {
+  const challenge = state.dailyChallenge;
+  if (!challenge || challenge.completed) return;
+  if (challenge.timer) window.clearInterval(challenge.timer);
+  challenge.completed = true;
+  challenge.result = result;
+  challenge.answerLocked = true;
+  if (result === "success") challenge.feedback = `Challenge complete! You earned ${challenge.score} points. Come back tomorrow.`;
+  if (result === "wrong") challenge.feedback = `Challenge over for today. Correct answer: ${challenge.questions[challenge.index].options[challenge.questions[challenge.index].answerIndex]}.`;
+  if (result === "timeout") challenge.feedback = `Time is up. Today's challenge is over. Correct answer: ${challenge.questions[challenge.index].options[challenge.questions[challenge.index].answerIndex]}.`;
+  localStorage.setItem(dailyAttemptKey(), JSON.stringify({ started: true, completed: true, result, score: challenge.score, roadmap: challenge.roadmap, topic: challenge.topic }));
+  $("#daily-status").textContent = result === "success" ? "Daily challenge completed. Your points are saved on this device." : "Daily challenge ended. A fresh challenge will be available tomorrow.";
+  $("#start-daily-challenge").disabled = true;
+  $("#start-daily-challenge").textContent = "Today's challenge complete";
+  setRoomSelectorLock(false);
+  renderDailyQuestion();
+}
+
+function answerDailyQuestion(answerIndex) {
+  const challenge = state.dailyChallenge;
+  if (!challenge || challenge.completed || challenge.answerLocked) return;
+  if (challenge.timer) window.clearInterval(challenge.timer);
+  challenge.answerLocked = true;
+  challenge.selectedAnswer = answerIndex;
+  const question = challenge.questions[challenge.index];
+  if (answerIndex !== question.answerIndex) {
+    challenge.feedback = "Not quite.";
+    finishDailyChallenge("wrong");
+    return;
+  }
+
+  challenge.score += 10;
+  const totalPoints = (Number(localStorage.getItem(dailyPointsKey)) || 0) + 10;
+  localStorage.setItem(dailyPointsKey, String(totalPoints));
+  const attempt = readDailyAttempt() || {};
+  localStorage.setItem(dailyAttemptKey(), JSON.stringify({ ...attempt, started: true, completed: false, score: challenge.score, roadmap: challenge.roadmap, topic: challenge.topic }));
+  $("#daily-points").textContent = String(totalPoints);
+  challenge.feedback = "Correct! +10 points.";
+  renderDailyQuestion();
+  if (challenge.index === challenge.questions.length - 1) {
+    window.setTimeout(() => finishDailyChallenge("success"), 650);
+  } else {
+    window.setTimeout(() => {
+      challenge.index += 1;
+      beginDailyQuestion();
+    }, 650);
+  }
 }
 
 async function generateRoomTest() {
@@ -611,6 +827,11 @@ $("#room-roadmap-select").addEventListener("change", () => {
 $("#room-topic-select").addEventListener("change", event => {
   state.roomTopicIndex = Number(event.target.value) || 0;
   renderInterviewTopics();
+});
+$("#start-daily-challenge").addEventListener("click", startDailyChallenge);
+$("#daily-question-area").addEventListener("click", event => {
+  const answer = event.target.closest("[data-daily-answer]");
+  if (answer) answerDailyQuestion(Number(answer.dataset.dailyAnswer));
 });
 $("#generate-test").addEventListener("click", generateRoomTest);
 $("#test-area").addEventListener("submit", submitGeneratedTest);
