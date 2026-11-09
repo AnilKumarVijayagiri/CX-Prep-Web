@@ -30,18 +30,15 @@ The cache reduces repeated database reads during traffic bursts. Supabase's host
 
 The admin editor supports career branch, experience level, roadmap length, skill tags, publish/draft state, lesson notes, concepts, rapid-fire question/answer pairs, and hands-on tasks. Use one topic per line and `question | answer` / `task title | task details` for structured entries.
 
-## Interview Room and Ollama Cloud
+## Interview Room and PrepPo AI
 
-The public Interview Room lets learners choose a career path and topic, review its notes and question answers, request a multiple-choice test, or start a PrepPo AI daily challenge. The daily challenge generates five topic-specific questions; correct answers award 10 points and advance, while one wrong answer or timeout ends that day's attempt. Ollama selects a 5-second limit for direct-recall questions and 7 seconds for short reasoning questions. The score and one-attempt-per-day state are stored in that browser's local storage.
+The public Interview Room lets learners choose a career path and topic, review its notes and question answers, request a multiple-choice test, or start a PrepPo AI daily challenge. A floating PrepPo AI chat window answers questions using the currently selected topic material and provides a shortcut to that topic's daily challenge.
 
-Generation uses Ollama's OpenAI-compatible cloud endpoint from the Vercel serverless function at `api/generate-test.js`; the key is never sent to the browser.
+The daily challenge generates five topic-specific questions; correct answers award 10 points and advance, while one wrong answer or timeout ends that day's attempt. Gemini chooses a 5-second limit for direct-recall questions and 7 seconds for short reasoning questions. The score and one-attempt-per-day state are stored in that browser's local storage.
 
-1. Create an Ollama Cloud API key at https://ollama.com/settings/keys.
-2. In Vercel Project Settings > Environment Variables, add `OLLAMA_API_KEY` for Production and Preview as a **Sensitive** variable, then redeploy. Never add this key to `config.js`, browser code, or GitHub.
-3. Optionally set `OLLAMA_MODEL` to a cloud model available to your Ollama account. The default is `gemma4:31b`.
-4. Ensure the Ollama account has cloud access, billing, or credits enabled. A provider `402` response is shown in the room as an account billing/credits message.
+Gemini powers the chat and serves as the fallback for tests when Ollama has no credits, is rate-limited, or is unavailable. Set `GEMINI_API_KEY` as a **Sensitive** Vercel environment variable for Production and Preview. Optionally set `GEMINI_MODEL`; the default is the stable `gemini-3.5-flash-lite`. Google currently lists free input/output tokens for this model, subject to API quotas, account eligibility, and current Google terms. Never add provider keys to `config.js`, browser code, or GitHub.
 
-The generation endpoint accepts 3-10 questions per request and applies a best-effort per-instance request limit. For local generation, use `vercel dev` with `OLLAMA_API_KEY` configured in your local environment; a basic static file server can show the learning material but does not execute Vercel API routes. Add a stronger shared rate limit or abuse challenge before broad public promotion of AI generation.
+Ollama is optional. If used, set `OLLAMA_API_KEY` as a Sensitive Vercel variable; its OpenAI-compatible cloud endpoint is tried first for tests. The Gemini key is also used directly if Ollama is not configured. Google AI Studio free-tier availability and quotas depend on the selected model, region, and current Google terms; a key does not guarantee unlimited free generation. The generation endpoint accepts 3-10 questions per request and applies best-effort per-instance request limits. For local AI features, use `vercel dev` with the provider keys set in the local environment; a basic static file server does not execute Vercel API routes.
 
 ## Content model
 

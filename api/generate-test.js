@@ -37,6 +37,73 @@ function parseGeneratedTest(content, requestedCount) {
   };
 }
 
+async function requestOllamaTest(apiKey, systemPrompt, userPrompt, requestedCount) {
+  const upstream = await fetch("https://ollama.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OLLAMA_MODEL || "gemma4:31b",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.35,
+      max_tokens: 2200,
+      stream: false
+    }),
+    signal: AbortSignal.timeout(55_000)
+  });
+  if (!upstream.ok) {
+    const error = new Error("Ollama Cloud request failed.");
+    error.status = upstream.status;
+    throw error;
+  }
+  const result = await upstream.json();
+  const content = result.choices?.[0]?.message?.content;
+  const test = typeof content === "string" ? parseGeneratedTest(content, requestedCount) : null;
+  if (!test) {
+    const error = new Error("Ollama returned incomplete test JSON.");
+    error.status = 502;
+    throw error;
+  }
+  return test;
+}
+
+async function requestGeminiTest(apiKey, systemPrompt, userPrompt, requestedCount) {
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+  const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.35, maxOutputTokens: 2200 }
+    }),
+    signal: AbortSignal.timeout(55_000)
+  });
+  if (!upstream.ok) {
+    const error = new Error("Gemini request failed.");
+    error.status = upstream.status;
+    throw error;
+  }
+  const result = await upstream.json();
+  const content = result.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("");
+  const test = typeof content === "string" ? parseGeneratedTest(content, requestedCount) : null;
+  if (!test) {
+    const error = new Error("Gemini returned incomplete test JSON.");
+    error.status = 502;
+    throw error;
+  }
+  return test;
+}
+
 module.exports = async (request, response) => {
   response.setHeader("Cache-Control", "no-store");
   if (request.method !== "POST") {
@@ -45,9 +112,10 @@ module.exports = async (request, response) => {
     return;
   }
 
-  const apiKey = process.env.OLLAMA_API_KEY;
-  if (!apiKey) {
-    sendError(response, 503, "AI test generation is not configured yet. Add OLLAMA_API_KEY to the Vercel project environment.");
+  const ollamaKey = process.env.OLLAMA_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!ollamaKey && !geminiKey) {
+    sendError(response, 503, "AI test generation is not configured yet. Add OLLAMA_API_KEY or GEMINI_API_KEY to the Vercel project environment.");
     return;
   }
 
@@ -93,53 +161,53 @@ module.exports = async (request, response) => {
     interviewQuestionBank: sourceQuestions
   });
 
-  try {
-    const upstream = await fetch("https://ollama.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: process.env.OLLAMA_MODEL || "gemma4:31b",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.35,
-        max_tokens: 2200,
-        stream: false
-      }),
-      signal: AbortSignal.timeout(55_000)
-    });
-
-    if (!upstream.ok) {
-      console.error("Ollama Cloud request failed with status", upstream.status);
-      if (upstream.status === 402) {
-        sendError(response, 402, "Ollama Cloud requires active billing or available credits for this key. Check the Ollama account, then try again.");
-        return;
-      }
-      if (upstream.status === 429) {
-        sendError(response, 429, "Ollama Cloud is rate limiting requests. Wait a little and try again.");
-        return;
-      }
-      sendError(response, upstream.status === 401 || upstream.status === 403 ? 502 : 503, "Ollama could not generate the test. Check the Vercel Ollama key and model settings, then try again.");
-      return;
+  let test = null;
+  let ollamaError = null;
+  if (ollamaKey) {
+    try {
+      test = await requestOllamaTest(ollamaKey, systemPrompt, userPrompt, questionCount);
+    } catch (error) {
+      ollamaError = error;
+      console.error("Ollama Cloud request failed:", error.status || error.name);
     }
-
-    const result = await upstream.json();
-    const content = result.choices?.[0]?.message?.content;
-    const test = typeof content === "string" ? parseGeneratedTest(content, questionCount) : null;
-    if (!test) {
-      sendError(response, 502, "The AI returned an incomplete test. Please generate it again.");
-      return;
-    }
-
-    response.setHeader("Content-Type", "application/json; charset=utf-8");
-    response.status(200).json(test);
-  } catch (error) {
-    console.error("Ollama Cloud request failed:", error.name);
-    sendError(response, error.name === "TimeoutError" ? 504 : 502, "Test generation is temporarily unavailable. Please try again.");
   }
+
+  if (!test && geminiKey) {
+    try {
+      test = await requestGeminiTest(geminiKey, systemPrompt, userPrompt, questionCount);
+    } catch (error) {
+      console.error("Gemini test fallback failed:", error.status || error.name);
+      if (error.status === 401 || error.status === 403) {
+        sendError(response, 502, "Gemini rejected the fallback key. Check GEMINI_API_KEY in Vercel.");
+        return;
+      }
+      if (error.status === 429) {
+        sendError(response, 429, "Gemini's current API quota is reached. Try again later or check your AI Studio quota.");
+        return;
+      }
+      sendError(response, error.name === "TimeoutError" ? 504 : 503, "Gemini could not generate this test. Check the model and AI Studio quota, then try again.");
+      return;
+    }
+  }
+
+  if (!test && ollamaError) {
+    if (ollamaError.status === 402) {
+      sendError(response, 402, "Ollama Cloud requires billing or credits, and the Gemini fallback is not configured.");
+      return;
+    }
+    if (ollamaError.status === 429) {
+      sendError(response, 429, "Ollama Cloud is rate limiting requests. Wait a little and try again.");
+      return;
+    }
+    sendError(response, ollamaError.status === 401 || ollamaError.status === 403 ? 502 : ollamaError.name === "TimeoutError" ? 504 : 503, "Ollama could not generate the test. Check its key and model settings, or configure GEMINI_API_KEY as a fallback.");
+    return;
+  }
+
+  if (!test) {
+    sendError(response, 503, "No AI provider could generate this test. Check the configured provider keys and quotas.");
+    return;
+  }
+
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.status(200).json(test);
 };

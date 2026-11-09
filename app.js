@@ -142,7 +142,7 @@ demoRoadmaps.push(
   }
 );
 
-const state = { client: null, user: null, admin: false, roadmaps: [], activeRoadmap: null, activeDay: 0, activeTab: "notes", selectedTrack: "All", adminRoadmaps: [], roomRoadmapId: null, roomTopicIndex: 0, generatedTest: null, dailyChallenge: null };
+const state = { client: null, user: null, admin: false, roadmaps: [], activeRoadmap: null, activeDay: 0, activeTab: "notes", selectedTrack: "All", adminRoadmaps: [], roomRoadmapId: null, roomTopicIndex: 0, generatedTest: null, dailyChallenge: null, prepChatContext: "", prepChatMessages: [], prepChatPending: false };
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character]);
 const lineBreaks = value => escapeHtml(value).replace(/\n/g, "<br>");
@@ -307,6 +307,7 @@ function renderInterviewTopics() {
   $("#test-area").hidden = true;
   $("#test-status").textContent = "";
   renderDailyChallenge();
+  renderPrepChatContext(selectedRoadmap, day);
 }
 
 function renderInterviewRoom() {
@@ -318,6 +319,78 @@ function renderInterviewRoom() {
   roadmapSelect.value = state.roomRoadmapId;
   state.roomTopicIndex = 0;
   renderInterviewTopics();
+}
+
+function renderPrepChatContext(roadmap, day) {
+  const track = $("#prep-chat-track");
+  if (!track) return;
+  if (!roadmap || !day) {
+    track.textContent = "Choose a course in the Interview Room";
+    return;
+  }
+  const context = `${roadmap.id}:${state.roomTopicIndex}`;
+  track.textContent = `${roadmap.title} / ${day.title}`;
+  if (state.prepChatContext !== context) {
+    state.prepChatContext = context;
+    state.prepChatMessages = [{
+      role: "assistant",
+      text: `Hi! I'm PrepPo AI. Ask me about ${day.title}, or use the challenge shortcut above.`,
+      welcome: true
+    }];
+    renderPrepChatMessages();
+  }
+}
+
+function renderPrepChatMessages() {
+  const container = $("#prep-chat-messages");
+  if (!container) return;
+  container.innerHTML = state.prepChatMessages.map(message => `<div class="chat-message ${message.role}${message.pending ? " pending" : ""}${message.error ? " error" : ""}">${escapeHtml(message.text)}</div>`).join("");
+  container.scrollTop = container.scrollHeight;
+  $("#prep-chat-form button[type=submit]").disabled = state.prepChatPending;
+}
+
+async function sendPrepChatMessage(messageText) {
+  const text = messageText.trim();
+  if (!text || state.prepChatPending) return;
+  const roadmap = state.roadmaps.find(item => String(item.id) === $("#room-roadmap-select").value);
+  const day = roadmapDays(roadmap)[Number($("#room-topic-select").value) || 0];
+  if (!roadmap || !day) return;
+
+  state.prepChatMessages.push({ role: "user", text });
+  state.prepChatMessages.push({ role: "assistant", text: "Thinking...", pending: true });
+  state.prepChatPending = true;
+  renderPrepChatMessages();
+
+  const messages = state.prepChatMessages.filter(item => !item.pending && !item.welcome).slice(-8).map(({ role, text: content }) => ({ role, text: content }));
+  try {
+    const response = await fetch("/api/prep-chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        roadmap: roadmap.title,
+        topic: day.title,
+        notes: `${day.notes || ""}\n\nKey concepts: ${(day.concepts || []).join(", ")}`,
+        questions: day.questions || [],
+        messages
+      })
+    });
+    const result = await response.json().catch(() => ({ error: "PrepPo AI chat is available on the deployed site or through `vercel dev`." }));
+    if (!response.ok) throw new Error(result.error || "PrepPo AI could not reply. Please try again.");
+    const pending = state.prepChatMessages.findLast(item => item.pending);
+    if (pending) { pending.pending = false; pending.text = result.reply; }
+  } catch (error) {
+    const pending = state.prepChatMessages.findLast(item => item.pending);
+    if (pending) { pending.pending = false; pending.error = true; pending.text = error.message; }
+  } finally {
+    state.prepChatPending = false;
+    renderPrepChatMessages();
+  }
+}
+
+function setPrepChatOpen(isOpen) {
+  $("#prep-chat-panel").hidden = !isOpen;
+  $("#prep-chat-toggle").setAttribute("aria-expanded", String(isOpen));
+  if (isOpen) $("#prep-chat-input").focus();
 }
 
 function renderDailyChallenge() {
@@ -837,6 +910,37 @@ $("#generate-test").addEventListener("click", generateRoomTest);
 $("#test-area").addEventListener("submit", submitGeneratedTest);
 $("#test-area").addEventListener("click", event => {
   if (event.target.closest("#retake-test")) generateRoomTest();
+});
+$("#prep-chat-toggle").addEventListener("click", () => setPrepChatOpen($("#prep-chat-panel").hidden));
+$("#prep-chat-close").addEventListener("click", () => setPrepChatOpen(false));
+$("#prep-chat-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const input = $("#prep-chat-input");
+  const text = input.value;
+  input.value = "";
+  await sendPrepChatMessage(text);
+});
+$("#prep-chat-input").addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    $("#prep-chat-form").requestSubmit();
+  }
+});
+$("#prep-chat-suggestions").addEventListener("click", event => {
+  const prompt = event.target.closest("[data-chat-prompt]");
+  if (prompt) sendPrepChatMessage(prompt.dataset.chatPrompt);
+});
+$("#prep-chat-daily").addEventListener("click", () => {
+  const challengeButton = $("#start-daily-challenge");
+  setPrepChatOpen(false);
+  $("#interview-room").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (challengeButton.disabled) {
+    const status = $("#daily-status").textContent || "Select a course topic with notes to start today's challenge.";
+    state.prepChatMessages.push({ role: "assistant", text: status });
+    renderPrepChatMessages();
+    return;
+  }
+  challengeButton.click();
 });
 
 async function initialize() {

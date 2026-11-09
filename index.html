@@ -124,6 +124,33 @@
 
   <footer class="site-footer"><a class="footer-brand" href="https://stschool.studenttribe.in/" target="_blank" rel="noreferrer"><img src="assets/st-school-mark.png" alt="St. School"></a><span>Made for learners building what comes next.</span><a href="#top">Back to top <span aria-hidden="true">&#8593;</span></a></footer>
 
+  <aside class="prep-ai-widget" aria-label="PrepPo AI assistant">
+    <section class="prep-chat-panel" id="prep-chat-panel" aria-labelledby="prep-chat-title" hidden>
+      <header class="prep-chat-header">
+        <div class="prep-chat-brand"><span class="prep-ai-mark">P</span><div><h2 id="prep-chat-title">PrepPo AI</h2><p><span class="chat-online-dot"></span> Interview practice companion</p></div></div>
+        <button class="icon-button" id="prep-chat-close" type="button" aria-label="Close PrepPo AI chat">&#10005;</button>
+      </header>
+      <div class="prep-chat-challenge">
+        <div><span class="chat-challenge-label">TODAY'S CHALLENGE</span><p id="prep-chat-track">Choose a course in the Interview Room</p></div>
+        <button id="prep-chat-daily" type="button">Start <span aria-hidden="true">&#8594;</span></button>
+      </div>
+      <div class="prep-chat-messages" id="prep-chat-messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+      <div class="prep-chat-suggestions" id="prep-chat-suggestions">
+        <button type="button" data-chat-prompt="Explain this topic with a simple example.">Explain this topic</button>
+        <button type="button" data-chat-prompt="Ask me one interview question about this topic, but do not reveal the answer yet.">Quiz me</button>
+      </div>
+      <form class="prep-chat-form" id="prep-chat-form">
+        <label class="sr-only" for="prep-chat-input">Ask PrepPo AI</label>
+        <textarea id="prep-chat-input" rows="1" maxlength="1200" placeholder="Ask about your selected topic..." required></textarea>
+        <button type="submit" aria-label="Send message">&#8593;</button>
+      </form>
+      <p class="prep-chat-note">AI can make mistakes. Check important answers against your learning notes.</p>
+    </section>
+    <button class="prep-chat-toggle" id="prep-chat-toggle" type="button" aria-expanded="false" aria-controls="prep-chat-panel">
+      <span class="chat-toggle-icon" aria-hidden="true">&#9993;</span><span>PrepPo AI</span><span class="chat-toggle-spark" aria-hidden="true">&#10022;</span>
+    </button>
+  </aside>
+
   <dialog class="admin-dialog" id="admin-dialog" aria-labelledby="admin-title">
     <div class="dialog-header"><div><p class="eyebrow eyebrow-dark"><span class="eyebrow-line"></span> CONTENT DESK</p><h2 id="admin-title">Admin workspace</h2></div><button class="icon-button" id="close-admin" type="button" aria-label="Close admin workspace">&#10005;</button></div>
     <div class="admin-body" id="admin-body"></div>
